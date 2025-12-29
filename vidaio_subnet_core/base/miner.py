@@ -16,13 +16,18 @@ class BaseMiner(ABC):
         self.init_bittensor()
 
     def init_bittensor(self):
-        self.subtensor = bt.subtensor(config=self.config)
+        # Support both old and new bittensor API
+        Subtensor = getattr(bt, 'Subtensor', None) or getattr(bt, 'subtensor', None)
+        Wallet = getattr(bt, 'Wallet', None) or getattr(bt, 'wallet', None)
+        Axon = getattr(bt, 'Axon', None) or getattr(bt, 'axon', None)
+
+        self.subtensor = Subtensor(config=self.config)
         logger.info(f"Subtensor: {self.subtensor}")
-        self.wallet = bt.wallet(config=self.config)
+        self.wallet = Wallet(config=self.config)
         logger.info(f"Wallet: {self.wallet}")
         self.metagraph = self.subtensor.metagraph(netuid=self.config.netuid)
         logger.info(f"Metagraph: {self.metagraph}")
-        self.axon = bt.axon(config=self.config)
+        self.axon = Axon(config=self.config)
         self.uid = self.metagraph.hotkeys.index(self.wallet.hotkey.ss58_address)
         logger.info(f"Running Miner with UID {self.uid}")
         self.axon.attach(
@@ -56,14 +61,17 @@ class BaseMiner(ABC):
     def get_config(self):
         parser = argparse.ArgumentParser()
         parser = add_common_config(parser)
-        config = bt.config(parser)
+        Config = getattr(bt, 'Config', None) or getattr(bt, 'config', None)
+        config = Config(parser)
+        # Support both old (hotkey_str) and new (hotkey) bittensor config
+        hotkey_name = getattr(config.wallet, 'hotkey_str', None) or getattr(config.wallet, 'hotkey', 'default')
         config.full_path = os.path.expanduser(
             "{}/{}/{}/netuid{}/{}".format(
                 config.logging.logging_dir,
                 config.wallet.name,
-                config.wallet.hotkey_str,
+                hotkey_name,
                 config.netuid,
-                "validator",
+                "miner",
             )
         )
         os.makedirs(config.full_path, exist_ok=True)

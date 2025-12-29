@@ -2,37 +2,37 @@
 # Configurable parameters for all encoders
 # Base settings, including default AQ where applicable
 ENCODER_SETTINGS = {
-    
-    "libsvtav1": {  # Changed from "AV1_Optimized"
-        "codec": "libsvtav1", "preset": "8", "crf": 30, "keyint": 50,
-        # SVT-AV1 specific settings
+    # Optimized for better compression ratios (higher CQ = smaller files)
+    # Scoring rewards compression (70%) over quality (30%)
+
+    "libsvtav1": {  # SVT-AV1 - excellent compression efficiency
+        "codec": "libsvtav1", "preset": "6", "crf": 35, "keyint": 50,
     },
-    "av1_nvenc": {
-        "codec": "av1_nvenc", "preset": "p6", "cq": 30, "keyint": 50, 'pix_fmt': 'yuv420p'
+    "av1_nvenc": {  # NVIDIA AV1 - fast GPU encoding
+        "codec": "av1_nvenc", "preset": "p5", "cq": 35, "keyint": 50, 'pix_fmt': 'yuv420p'
     },
-    "libvpx_vp9": {  # Changed from "vp9"
-        "codec": "libvpx-vp9", "deadline": "good", "cpu-used": 2, "crf": 32, "keyint": 50,
+    "libvpx_vp9": {  # VP9 - good compression
+        "codec": "libvpx-vp9", "deadline": "good", "cpu-used": 2, "crf": 38, "keyint": 50,
         "aq-mode": 1, "arnr-maxframes": 7, "arnr-strength": 4, "auto-alt-ref": 1,
         "tune": "psnr", "row-mt": 1
     },
-    "libx264": {  # Changed from "h264"
-        "codec": "libx264", "preset": "medium", "crf": 23, "keyint": 50,
+    "libx264": {  # H.264 - widely compatible
+        "codec": "libx264", "preset": "medium", "crf": 28, "keyint": 50,
         "aq-mode": 1, "aq-strength": 1.0
     },
-    "libvvenc": {  # Changed from "h266_vvc"
-        "codec": "libvvenc", "preset": "medium", "crf": 28, "keyint": 50,
-        # VVC/H.266 encoder
+    "libvvenc": {  # H.266/VVC - best compression
+        "codec": "libvvenc", "preset": "medium", "crf": 33, "keyint": 50,
     },
-    "libx265": {  # Changed from "hevc"
-        "codec": "libx265", "preset": "medium", "crf": 28, "keyint": 50,
+    "libx265": {  # HEVC - good compression
+        "codec": "libx265", "preset": "medium", "crf": 32, "keyint": 50,
         "aq-mode": 2, "aq-strength": 1.0
     },
-    "hevc_nvenc": {
-        "codec": "hevc_nvenc", "preset": "p4", "rc": "constqp", "cq": 22, "keyint": 50,
+    "hevc_nvenc": {  # NVIDIA HEVC - fast GPU encoding
+        "codec": "hevc_nvenc", "preset": "p4", "rc": "constqp", "cq": 28, "keyint": 50,
         "spatial-aq": 1, "temporal-aq": 0
     },
-    "h264_nvenc": {
-        "codec": "h264_nvenc", "preset": "p4", "rc": "constqp", "cq": 22, "keyint": 50,
+    "h264_nvenc": {  # NVIDIA H.264 - fast GPU encoding
+        "codec": "h264_nvenc", "preset": "p4", "rc": "constqp", "cq": 26, "keyint": 50,
         "spatial-aq": 1, "temporal-aq": 0
     },
     "ffv1": {

@@ -27,12 +27,15 @@ class BaseValidator(ABC):
     def get_config(self):
         parser = argparse.ArgumentParser()
         parser = add_common_config(parser)
-        config = bt.config(parser)
+        Config = getattr(bt, 'Config', None) or getattr(bt, 'config', None)
+        config = Config(parser)
+        # Support both old (hotkey_str) and new (hotkey) bittensor config
+        hotkey_name = getattr(config.wallet, 'hotkey_str', None) or getattr(config.wallet, 'hotkey', 'default')
         config.full_path = os.path.expanduser(
             "{}/{}/{}/netuid{}/{}".format(
                 config.logging.logging_dir,
                 config.wallet.name,
-                config.wallet.hotkey_str,
+                hotkey_name,
                 config.netuid,
                 "validator",
             )
@@ -57,11 +60,16 @@ class BaseValidator(ABC):
 
     def setup_bittensor_objects(self):
         logger.info("Setting up Bittensor objects.")
-        self.wallet = bt.wallet(config=self.config)
+        # Support both old and new bittensor API
+        Wallet = getattr(bt, 'Wallet', None) or getattr(bt, 'wallet', None)
+        Subtensor = getattr(bt, 'Subtensor', None) or getattr(bt, 'subtensor', None)
+        Dendrite = getattr(bt, 'Dendrite', None) or getattr(bt, 'dendrite', None)
+
+        self.wallet = Wallet(config=self.config)
         logger.info(f"Wallet: {self.wallet}")
-        self.subtensor = bt.subtensor(config=self.config)
+        self.subtensor = Subtensor(config=self.config)
         logger.info(f"Subtensor: {self.subtensor}")
-        self.dendrite = bt.dendrite(wallet=self.wallet)
+        self.dendrite = Dendrite(wallet=self.wallet)
         logger.info(f"Dendrite: {self.dendrite}")
         logger.info(self.config.netuid)
         self.metagraph = self.subtensor.metagraph(self.config.netuid)
@@ -80,7 +88,8 @@ class BaseValidator(ABC):
             logger.info(f"Running validator on uid: {self.my_subnet_uid}")
 
     def setup_axon(self):
-        self.axon = bt.axon(wallet=self.wallet, config=self.config)
+        Axon = getattr(bt, 'Axon', None) or getattr(bt, 'axon', None)
+        self.axon = Axon(wallet=self.wallet, config=self.config)
         logger.info(
             f"Serving axon on network: {self.config.subtensor.network} with netuid: {self.config.netuid}"
         )

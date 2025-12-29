@@ -76,56 +76,27 @@ def upscale_video(payload_video_path: str, task_type: str):
         frame_rate = get_frame_rate(input_file)
         print(f"Frame rate detected: {frame_rate} fps")
 
-        # Calculate the duration to duplicate 2 frames
-        stop_duration = 2 / frame_rate
-
-        # Generate output file paths
-        output_file_with_extra_frames = input_file.with_name(f"{input_file.stem}_extra_frames.mp4")
+        # Generate output file path
         output_file_upscaled = input_file.with_name(f"{input_file.stem}_upscaled.mp4")
 
-        # Step 1: Duplicate the last frame two times
-        print("Step 1: Duplicating the last frame two times...")
-        start_time = time.time()
-
-        duplicate_last_frame_command = [
-            "ffmpeg",
-            "-i", str(input_file),
-            "-vf", f"tpad=stop_mode=clone:stop_duration={stop_duration}",
-            "-c:v", "libx264",
-            "-crf", "28",
-            "-preset", "fast",
-            str(output_file_with_extra_frames)
-        ]
-
-        duplicate_last_frame_process = subprocess.run(
-            duplicate_last_frame_command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
-        )
-
-        elapsed_time = time.time() - start_time
-        if duplicate_last_frame_process.returncode != 0:
-            print(f"Duplicating frames failed: {duplicate_last_frame_process.stderr.strip()}")
-            raise HTTPException(status_code=500, detail=f"Duplicating frames failed: {duplicate_last_frame_process.stderr.strip()}")
-        if not output_file_with_extra_frames.exists():
-            print("MP4 video file with extra frames was not created.")
-            raise HTTPException(status_code=500, detail="MP4 video file with extra frames was not created.")
-        print(f"Step 1 completed in {elapsed_time:.2f} seconds. File with extra frames: {output_file_with_extra_frames}")
-
-        # Step 2: Upscale video using video2x
-        print("Step 2: Upscaling video using video2x...")
+        # Upscale video directly using video2x (removed frame duplication step)
+        # Frame duplication was causing frame count mismatch with reference video,
+        # resulting in zero scores from validators
+        print("Upscaling video using video2x...")
         start_time = time.time()
         video2x_command = [
             "video2x",
-            "-i", str(output_file_with_extra_frames),
+            "-i", str(input_file),
             "-o", str(output_file_upscaled),
-            "-p", "realesrgan",               
-            "-s", scale_factor,               
-            "-c", "libx265",                  
-            "-e", "preset=slow",              
-            "-e", "crf=20",                   
-            "-e", "profile=main",             
-            "-e", "pix_fmt=yuv420p",          
-            "-e", "sar=1:1",                  
-            "-e", "color_primaries=bt709",    
+            "-p", "realesrgan",               # Best upscaling model
+            "-s", scale_factor,
+            "-c", "libx265",                  # HEVC for good compression
+            "-e", "preset=medium",            # Balanced speed/quality
+            "-e", "crf=18",                   # Higher quality (synthetic scoring doesn't penalize size)
+            "-e", "profile=main",
+            "-e", "pix_fmt=yuv420p",
+            "-e", "sar=1:1",
+            "-e", "color_primaries=bt709",
             "-e", "color_trc=bt709",
             "-e", "colorspace=bt709",
             "-e", "movflags=+faststart",
@@ -138,17 +109,13 @@ def upscale_video(payload_video_path: str, task_type: str):
         if not output_file_upscaled.exists():
             print("Upscaled MP4 video file was not created.")
             raise HTTPException(status_code=500, detail="Upscaled MP4 video file was not created.")
-        print(f"Step 2 completed in {elapsed_time:.2f} seconds. Upscaled MP4 file: {output_file_upscaled}")
+        print(f"Upscaling completed in {elapsed_time:.2f} seconds. Upscaled MP4 file: {output_file_upscaled}")
 
-        # Cleanup intermediate files if needed
-        if output_file_with_extra_frames.exists():
-            output_file_with_extra_frames.unlink()
-            print(f"Intermediate file {output_file_with_extra_frames} deleted.")
-            
+        # Cleanup input file
         if input_file.exists():
             input_file.unlink()
             print(f"Original file {input_file} deleted.")
-        
+
         print(f"Returning from FastAPI: {output_file_upscaled}")
         return output_file_upscaled
     except Exception as e:

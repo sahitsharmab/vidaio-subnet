@@ -21,3 +21,4 @@ class StorageConfig(BaseModel):
     secret_key: str = Field(default=os.getenv("BUCKET_COMPATIBLE_SECRET_KEY", "minioadmin"))
     secure: bool = Field(default=True)
     bucket_name: str = Field(default=os.getenv("BUCKET_NAME", "vidaio-subnet"))
+    region: str = Field(default=os.getenv("BUCKET_REGION", "auto"))

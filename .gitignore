@@ -34,3 +34,11 @@ test.py
 ignore/
 test_outputs/
 unit_tests/
+
+# VS Code - allow settings but ignore local state
+!.vscode/
+!.vscode/settings.json
+!.vscode/launch.json
+!.vscode/tasks.json
+.vscode/*.log
+.vscode/.ropeproject/

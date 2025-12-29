@@ -202,18 +202,16 @@ async def compress_video(video: CompressPayload):
     input_file = Path(input_path)
     vmaf_threshold = video.vmaf_threshold
 
-    # Map VMAF threshold to target quality using configurable thresholds
-    if vmaf_threshold == VMAF_THRESHOLD_LOW:
-        target_quality = 'Low'
-    elif vmaf_threshold == VMAF_THRESHOLD_MEDIUM:
-        target_quality = 'Medium'
-    elif vmaf_threshold == VMAF_THRESHOLD_HIGH:
+    # Map VMAF threshold to target quality dynamically
+    # Support any VMAF threshold by mapping to closest quality tier
+    if vmaf_threshold >= VMAF_THRESHOLD_HIGH:
         target_quality = 'High'
+    elif vmaf_threshold >= VMAF_THRESHOLD_MEDIUM:
+        target_quality = 'Medium'
     else:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid VMAF threshold. Expected {VMAF_THRESHOLD_LOW}, {VMAF_THRESHOLD_MEDIUM}, or {VMAF_THRESHOLD_HIGH}, got {vmaf_threshold}"
-        )
+        target_quality = 'Low'
+
+    logger.info(f"Mapped VMAF threshold {vmaf_threshold} to quality tier: {target_quality}")
 
     # Map codec name from protocol format to ffmpeg encoder name
     ffmpeg_codec = map_codec_name(video.target_codec, prefer_gpu=True)
@@ -552,30 +550,32 @@ def _get_default_config() -> dict:
             'codec_mode': 'CRF',  # Will be overridden by request
             'target_bitrate': 10.0,  # Will be overridden by request
             'size_increase_protection': True,
-            'conservative_cq_adjustment': 2,
+            'conservative_cq_adjustment': 0,  # Optimized: removed safety margin for better compression
             'max_output_size_ratio': 1.15,
             'max_encoding_retries': 2,
             'basic_cq_lookup_by_quality': {
-                'High': {
-                    'animation': 22,
-                    'low-action': 20,
-                    'medium-action': 18,
-                    'high-action': 16,
-                    'default': 19
+                # Optimized CQ values: Higher CQ = more compression, lower VMAF
+                # Target: VMAF threshold + 2-3 points with 8-15x compression ratio
+                'High': {  # Target VMAF ~95 (threshold 93)
+                    'animation': 30,   # Animation compresses well
+                    'low-action': 28,  # Static content can handle higher CQ
+                    'medium-action': 26,
+                    'high-action': 24,  # Fast motion needs lower CQ
+                    'default': 27
                 },
-                'Medium': {
-                    'animation': 25,
-                    'low-action': 23,
-                    'medium-action': 21,
-                    'high-action': 19,
-                    'default': 22
+                'Medium': {  # Target VMAF ~91 (threshold 89)
+                    'animation': 33,
+                    'low-action': 31,
+                    'medium-action': 29,
+                    'high-action': 27,
+                    'default': 30
                 },
-                'Low': {
-                    'animation': 28,
-                    'low-action': 26,
-                    'medium-action': 24,
-                    'high-action': 22,
-                    'default': 25
+                'Low': {  # Target VMAF ~87 (threshold 85)
+                    'animation': 36,
+                    'low-action': 34,
+                    'medium-action': 32,
+                    'high-action': 30,
+                    'default': 33
                 }
             },
         },

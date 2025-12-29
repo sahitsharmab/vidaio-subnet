@@ -638,6 +638,7 @@ def get_storage_client():
             access_key=CONFIG.storage.access_key,
             secret_key=CONFIG.storage.secret_key,
             bucket_name=CONFIG.storage.bucket_name,
+            region=CONFIG.storage.region,
         )
     elif bucket_type == "hippius":
         return HippiusClient(

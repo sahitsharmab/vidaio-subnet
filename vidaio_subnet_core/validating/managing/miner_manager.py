@@ -24,10 +24,14 @@ class MinerManager:
         logger.info(f"Initializing MinerManager with uid: {uid}")
         self.uid = uid
         self.wallet = wallet
-        self.dendrite = bt.dendrite(wallet=self.wallet)
+        # Support both old and new bittensor API
+        Dendrite = getattr(bt, 'Dendrite', None) or getattr(bt, 'dendrite', None)
+        Subtensor = getattr(bt, 'Subtensor', None) or getattr(bt, 'subtensor', None)
+
+        self.dendrite = Dendrite(wallet=self.wallet)
 
         self.config = config
-        self.subtensor = bt.subtensor(config=self.config)
+        self.subtensor = Subtensor(config=self.config)
         self.burn_proportion = float(1/2)   # 1/2 of miner emissions burnt
 
         self.metagraph = metagraph

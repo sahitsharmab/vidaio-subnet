@@ -11,8 +11,8 @@ from services.miner_utilities.miner_utils import video_upscaler, video_compresso
 
 from vidaio_subnet_core.utilities.version import check_version
 
-MAX_CONTENT_LEN = ContentLength.FIVE
-warrant_task = TaskType.UPSCALING
+MAX_CONTENT_LEN = ContentLength.TEN  # Changed from FIVE to TEN for better length scores
+warrant_task = TaskType.COMPRESSION  # Compression gets 60% of rewards + our AI pipeline is well-optimized
 
 class Miner(BaseMiner):
     def __init__(self, config: dict | None = None) -> None:

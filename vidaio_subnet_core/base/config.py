@@ -89,10 +89,18 @@ def add_common_config(parser: argparse.ArgumentParser):
     Adds relevant common arguments to the parser for this miner or validator.
     Returns the updated parser.
     """
-    bt.wallet.add_args(parser)
-    bt.subtensor.add_args(parser)
+    # Support both old and new bittensor API (wallet vs Wallet)
+    wallet_cls = getattr(bt, 'Wallet', None) or getattr(bt, 'wallet', None)
+    subtensor_cls = getattr(bt, 'Subtensor', None) or getattr(bt, 'subtensor', None)
+    axon_cls = getattr(bt, 'Axon', None) or getattr(bt, 'axon', None)
+
+    if wallet_cls:
+        wallet_cls.add_args(parser)
+    if subtensor_cls:
+        subtensor_cls.add_args(parser)
     bt.logging.add_args(parser)
-    bt.axon.add_args(parser)
+    if axon_cls:
+        axon_cls.add_args(parser)
     add_args(parser)
     add_validator_args(parser)
     return parser  
