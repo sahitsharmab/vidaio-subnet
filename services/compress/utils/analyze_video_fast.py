@@ -4,7 +4,7 @@ import numpy as np
 import cv2
 import subprocess
 
-def analyze_video_fast(video_path, max_frames=150,logging_enabled=True,include_quality_metrics=False):
+def analyze_video_fast(video_path, max_frames=30, logging_enabled=True, include_quality_metrics=False):
     """
     Enhanced video analysis with ONLY required features for efficient processing.
     
@@ -131,7 +131,7 @@ def extract_basic_video_properties(video_path, logging_enabled=True):
             print(f"❌ Basic video property extraction failed: {e}")
         return None
 
-def extract_comprehensive_video_metrics(video_path, max_frames=150, logging_enabled=True, use_middle_section=True):
+def extract_comprehensive_video_metrics(video_path, max_frames=30, logging_enabled=True, use_middle_section=True):
     """
     Extract ALL required video metrics using OpenCV analysis.
     

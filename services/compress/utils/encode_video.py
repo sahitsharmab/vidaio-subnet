@@ -227,26 +227,16 @@ def get_contrast_optimized_params(scene_type, contrast_value, codec):
         params['auto-alt-ref'] = 1  # Enable alternate reference frames
     
     # --- Scene-specific contrast adjustments ---
+    # NOTE: rc-lookahead REMOVED for speed - it causes NVENC to buffer frames
+    # and significantly slows encoding (82s -> should be ~10-15s for 30s video)
+
     # For text content, adjust parameters further based on contrast
     if scene_type == 'Screen Content / Text':
         if contrast_category == "high":
             params['sharpness'] = 0  # Preserve sharpness
-            if "_nvenc" in codec:  # ✅ FIXED: lowercase nvenc
-                params['rc-lookahead'] = 20  # More lookahead for complex text
         elif contrast_category == "low":
             params['sharpness'] = 1  # Some sharpening for low contrast text
-            if "_nvenc" in codec:  # ✅ FIXED: lowercase nvenc
-                params['rc-lookahead'] = 8  # Less lookahead needed
-    
-    # For faces, special handling based on contrast
-    elif scene_type == 'Faces / People':
-        if contrast_category == "high":
-            if "_nvenc" in codec:  # ✅ FIXED: lowercase nvenc
-                params['rc-lookahead'] = 20  # More lookahead for dramatic lighting
-        else:
-            if "_nvenc" in codec:  # ✅ FIXED: lowercase nvenc
-                params['rc-lookahead'] = 15  # Standard lookahead
-    
+
     return params
 
 def encode_video(input_path, output_path, codec, rate=None, preset=None, scene_type=None, contrast_value=None, codec_mode=None, target_bitrate=None, logging_enabled=True):
@@ -297,12 +287,16 @@ def encode_video(input_path, output_path, codec, rate=None, preset=None, scene_t
             current_settings.update(scene_params)
 
     # 3. Apply contrast-specific overrides if contrast_value is provided
-    if contrast_value is not None:
-        contrast_params = get_contrast_optimized_params(scene_type, contrast_value, codec)
-        if contrast_params:
-            if logging_enabled:
-                print(f"Applying contrast-specific params: {contrast_params}")
-            current_settings.update(contrast_params)
+    # DISABLED FOR SPEED: contrast params re-enable spatial-aq which slows NVENC encoding
+    # and provides minimal quality benefit for the 2-3s cost
+    # if contrast_value is not None:
+    #     contrast_params = get_contrast_optimized_params(scene_type, contrast_value, codec)
+    #     if contrast_params:
+    #         if logging_enabled:
+    #             print(f"Applying contrast-specific params: {contrast_params}")
+    #         current_settings.update(contrast_params)
+    if logging_enabled and contrast_value is not None:
+        print(f"Contrast optimization disabled for speed (contrast_value={contrast_value:.2f})")
 
     # 4. Apply codec_mode and target_bitrate if provided (BEFORE rate mapping)
     # This determines whether we should apply CQ/CRF or use bitrate control
@@ -466,18 +460,21 @@ def encode_video(input_path, output_path, codec, rate=None, preset=None, scene_t
 
     # --- Execute FFmpeg ---
     try:
+        if logging_enabled:
+            print(f"⏱️ FFmpeg starting: {codec} | CQ/CRF={output_args.get('cq', output_args.get('crf', output_args.get('qp', 'N/A')))} | preset={output_args.get('preset', 'default')}")
+
         start_time = time.time()
-        
+
         input_stream = ffmpeg.input(input_path)
         output_stream = ffmpeg.output(input_stream, output_path, **output_args)
-        
+
         result = output_stream.run(
             overwrite_output=True,
             capture_stdout=True,
             capture_stderr=True,
             quiet=(not logging_enabled)
         )
-        
+
         end_time = time.time()
         encoding_time_calculated = round(end_time - start_time, 2)
         stderr = result[1].decode("utf-8") if result[1] else ""
@@ -490,7 +487,15 @@ def encode_video(input_path, output_path, codec, rate=None, preset=None, scene_t
                     encoding_results_log = line
 
         if logging_enabled:
-            print(f"Successfully encoded using {codec} scene '{scene_type}': {output_path}")
+            # Calculate encoding speed
+            import os
+            input_size_mb = os.path.getsize(input_path) / (1024 * 1024) if os.path.exists(input_path) else 0
+            output_size_mb = os.path.getsize(output_path) / (1024 * 1024) if os.path.exists(output_path) else 0
+            compression_pct = ((input_size_mb - output_size_mb) / input_size_mb * 100) if input_size_mb > 0 else 0
+
+            print(f"⏱️ FFmpeg completed in {encoding_time_calculated:.2f}s")
+            print(f"   📊 Size: {input_size_mb:.1f}MB → {output_size_mb:.1f}MB ({compression_pct:.1f}% reduction)")
+            print(f"   ✅ Encoded: {output_path}")
         return encoding_results_log, encoding_time_calculated
 
     except ffmpeg.Error as e:

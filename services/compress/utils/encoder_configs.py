@@ -5,11 +5,13 @@ ENCODER_SETTINGS = {
     # Optimized for better compression ratios (higher CQ = smaller files)
     # Scoring rewards compression (70%) over quality (30%)
 
-    "libsvtav1": {  # SVT-AV1 - excellent compression efficiency
-        "codec": "libsvtav1", "preset": "6", "crf": 35, "keyint": 50,
+    "libsvtav1": {  # SVT-AV1 - SPEED OPTIMIZED (preset 12) to meet 90s validator timeout
+        # Preset 12 is very fast while still having decent compression
+        # On A6000 (no AV1 NVENC), this runs on CPU so speed is critical
+        "codec": "libsvtav1", "preset": "12", "crf": 38, "keyint": 50,
     },
-    "av1_nvenc": {  # NVIDIA AV1 - fast GPU encoding
-        "codec": "av1_nvenc", "preset": "p5", "cq": 35, "keyint": 50, 'pix_fmt': 'yuv420p'
+    "av1_nvenc": {  # NVIDIA AV1 - FASTEST settings (p1) to meet 90s validator timeout
+        "codec": "av1_nvenc", "preset": "p1", "cq": 35, "keyint": 50, 'pix_fmt': 'yuv420p'
     },
     "libvpx_vp9": {  # VP9 - good compression
         "codec": "libvpx-vp9", "deadline": "good", "cpu-used": 2, "crf": 38, "keyint": 50,
@@ -27,13 +29,13 @@ ENCODER_SETTINGS = {
         "codec": "libx265", "preset": "medium", "crf": 32, "keyint": 50,
         "aq-mode": 2, "aq-strength": 1.0
     },
-    "hevc_nvenc": {  # NVIDIA HEVC - fast GPU encoding
-        "codec": "hevc_nvenc", "preset": "p4", "rc": "constqp", "cq": 28, "keyint": 50,
-        "spatial-aq": 1, "temporal-aq": 0
+    "hevc_nvenc": {  # NVIDIA HEVC - FASTEST settings (p1) to meet 90s validator timeout
+        "codec": "hevc_nvenc", "preset": "p1", "rc": "constqp", "cq": 28, "keyint": 50,
+        "spatial-aq": 0, "temporal-aq": 0
     },
-    "h264_nvenc": {  # NVIDIA H.264 - fast GPU encoding
-        "codec": "h264_nvenc", "preset": "p4", "rc": "constqp", "cq": 26, "keyint": 50,
-        "spatial-aq": 1, "temporal-aq": 0
+    "h264_nvenc": {  # NVIDIA H.264 - FASTEST settings (p1) to meet 90s validator timeout
+        "codec": "h264_nvenc", "preset": "p1", "rc": "constqp", "cq": 26, "keyint": 50,
+        "spatial-aq": 0, "temporal-aq": 0
     },
     "ffv1": {
         "codec": "ffv1",
@@ -50,29 +52,29 @@ ENCODER_SETTINGS = {
 # Scene-Specific Parameter Overrides (including AQ and keyint)
 # These are examples and need tuning based on content and codec specifics.
 SCENE_SPECIFIC_PARAMS = {
-    'av1_nvenc': {  # Changed from 'AV1_NVENC'
-        'Screen Content / Text': {'preset': 'p7', 'spatial-aq': 1, 'temporal-aq': 0, 'keyint': 250},
-        'Faces / People': {'preset': 'p6', 'spatial-aq': 1, 'temporal-aq': 1, 'keyint': 100},
-        'Animation / Cartoon / Rendered Graphics': {'preset': 'p5', 'spatial-aq': 1, 'temporal-aq': 0, 'keyint': 150},
-        'Gaming Content': {'preset': 'p5', 'spatial-aq': 1, 'temporal-aq': 0, 'keyint': 75},
-        'other': {'keyint': 100},
-        'unclear': {'keyint': 100},
+    'av1_nvenc': {  # SPEED OPTIMIZED - p1 preset for all to meet 90s validator timeout
+        'Screen Content / Text': {'preset': 'p1', 'spatial-aq': 0, 'temporal-aq': 0, 'keyint': 250},
+        'Faces / People': {'preset': 'p1', 'spatial-aq': 0, 'temporal-aq': 0, 'keyint': 100},
+        'Animation / Cartoon / Rendered Graphics': {'preset': 'p1', 'spatial-aq': 0, 'temporal-aq': 0, 'keyint': 150},
+        'Gaming Content': {'preset': 'p1', 'spatial-aq': 0, 'temporal-aq': 0, 'keyint': 75},
+        'other': {'preset': 'p1', 'spatial-aq': 0, 'temporal-aq': 0, 'keyint': 100},
+        'unclear': {'preset': 'p1', 'spatial-aq': 0, 'temporal-aq': 0, 'keyint': 100},
     },
-    'hevc_nvenc': {  # Changed from 'HEVC_NVENC'
-        'Screen Content / Text': {'preset': 'p7', 'spatial-aq': 1, 'temporal-aq': 0, 'keyint': 250},
-        'Faces / People': {'preset': 'p6', 'spatial-aq': 1, 'temporal-aq': 1, 'keyint': 100},
-        'Animation / Cartoon / Rendered Graphics': {'preset': 'p5', 'spatial-aq': 1, 'temporal-aq': 0, 'keyint': 150},
-        'Gaming Content': {'preset': 'p5', 'spatial-aq': 1, 'temporal-aq': 0, 'keyint': 75},
-        'other': {'keyint': 100},
-        'unclear': {'keyint': 100},
+    'hevc_nvenc': {  # SPEED OPTIMIZED - p1 preset for all to meet 90s validator timeout
+        'Screen Content / Text': {'preset': 'p1', 'spatial-aq': 0, 'temporal-aq': 0, 'keyint': 250},
+        'Faces / People': {'preset': 'p1', 'spatial-aq': 0, 'temporal-aq': 0, 'keyint': 100},
+        'Animation / Cartoon / Rendered Graphics': {'preset': 'p1', 'spatial-aq': 0, 'temporal-aq': 0, 'keyint': 150},
+        'Gaming Content': {'preset': 'p1', 'spatial-aq': 0, 'temporal-aq': 0, 'keyint': 75},
+        'other': {'preset': 'p1', 'spatial-aq': 0, 'temporal-aq': 0, 'keyint': 100},
+        'unclear': {'preset': 'p1', 'spatial-aq': 0, 'temporal-aq': 0, 'keyint': 100},
     },
-    'h264_nvenc': {  # Changed from 'H264_NVENC'
-        'Screen Content / Text': {'preset': 'p7', 'spatial-aq': 1, 'temporal-aq': 0, 'keyint': 250},
-        'Faces / People': {'preset': 'p6', 'spatial-aq': 1, 'temporal-aq': 1, 'keyint': 100},
-        'Animation / Cartoon / Rendered Graphics': {'preset': 'p5', 'spatial-aq': 1, 'temporal-aq': 0, 'keyint': 150},
-        'Gaming Content': {'preset': 'p5', 'spatial-aq': 1, 'temporal-aq': 0, 'keyint': 75},
-        'other': {'keyint': 100},
-        'unclear': {'keyint': 100},
+    'h264_nvenc': {  # SPEED OPTIMIZED - p1 preset for all to meet 90s validator timeout
+        'Screen Content / Text': {'preset': 'p1', 'spatial-aq': 0, 'temporal-aq': 0, 'keyint': 250},
+        'Faces / People': {'preset': 'p1', 'spatial-aq': 0, 'temporal-aq': 0, 'keyint': 100},
+        'Animation / Cartoon / Rendered Graphics': {'preset': 'p1', 'spatial-aq': 0, 'temporal-aq': 0, 'keyint': 150},
+        'Gaming Content': {'preset': 'p1', 'spatial-aq': 0, 'temporal-aq': 0, 'keyint': 75},
+        'other': {'preset': 'p1', 'spatial-aq': 0, 'temporal-aq': 0, 'keyint': 100},
+        'unclear': {'preset': 'p1', 'spatial-aq': 0, 'temporal-aq': 0, 'keyint': 100},
     },
     'libx264': {
         'Screen Content / Text': {'preset': 'slow', 'tune': 'film', 'aq-mode': 1, 'aq-strength': 1.2, 'keyint': 250},
@@ -98,13 +100,13 @@ SCENE_SPECIFIC_PARAMS = {
         'other': {'deadline': 'good', 'cpu-used': 2, 'aq-mode': 1, 'keyint': 100},
         'unclear': {'deadline': 'good', 'cpu-used': 2, 'aq-mode': 1, 'keyint': 100},
     },
-    'libsvtav1': {
-        'Screen Content / Text': {'preset': '6', 'tune': 0, 'keyint': 250},  # tune 0 = subjective quality
-        'Faces / People': {'preset': '8', 'tune': 1, 'keyint': 100},        # tune 1 = objective quality
-        'Animation / Cartoon / Rendered Graphics': {'preset': '7', 'tune': 0, 'keyint': 150},
-        'Gaming Content': {'preset': '9', 'tune': 2, 'keyint': 75},         # tune 2 = fast decode
-        'other': {'preset': '8', 'tune': 1, 'keyint': 100},
-        'unclear': {'preset': '8', 'tune': 1, 'keyint': 100},
+    'libsvtav1': {  # SPEED OPTIMIZED - preset 11-12 for 90s validator timeout (CPU encoding is slow!)
+        'Screen Content / Text': {'preset': '11', 'tune': 0, 'keyint': 250},
+        'Faces / People': {'preset': '12', 'tune': 1, 'keyint': 100},
+        'Animation / Cartoon / Rendered Graphics': {'preset': '11', 'tune': 0, 'keyint': 150},
+        'Gaming Content': {'preset': '12', 'tune': 2, 'keyint': 75},
+        'other': {'preset': '12', 'tune': 1, 'keyint': 100},
+        'unclear': {'preset': '12', 'tune': 1, 'keyint': 100},
     },
     'libvvenc': {
         'Screen Content / Text': {'preset': 'slow', 'keyint': 250},

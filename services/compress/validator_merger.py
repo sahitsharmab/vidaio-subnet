@@ -4,7 +4,7 @@ import time
 from datetime import datetime
 from utils.calculate_vmaf_adv import calculate_vmaf_advanced
 from utils.merge_videos import merge_videos
-import signal
+from vmaf_calculator import scene_vmaf_calculation
 
 def validation_and_merging(original_video_path, encoded_scenes_data, config, logging_enabled=True):
     """
@@ -28,6 +28,7 @@ def validation_and_merging(original_video_path, encoded_scenes_data, config, log
     
     # Check if full video VMAF calculation is enabled
     calculate_full_video_vmaf = config.get('vmaf_calculation', {}).get('calculate_full_video_vmaf', True)
+    calculate_scene_vmaf_flag = config.get('vmaf_calculation', {}).get('calculate_scene_vmaf', True)
     
     if logging_enabled:
         print(f"calculate_full_video_vmaf flag: {calculate_full_video_vmaf}")
@@ -45,6 +46,17 @@ def validation_and_merging(original_video_path, encoded_scenes_data, config, log
     
     # Initialize processing start time
     part5_start_time = time.time()
+
+    # ===== SCENE VMAF CALCULATION =====
+    if calculate_scene_vmaf_flag:
+        if logging_enabled:
+            print(f"\n📊 Calculating scene-level VMAF before validation...")
+        encoded_scenes_data = scene_vmaf_calculation(
+            encoded_scenes_data, config, logging_enabled=logging_enabled
+        )
+    else:
+        if logging_enabled:
+            print(f"\n⏭️ Scene VMAF calculation disabled by config")
     
     # ===== SCENE VALIDATION =====
     if logging_enabled:
@@ -162,20 +174,7 @@ def validation_and_merging(original_video_path, encoded_scenes_data, config, log
         print(f"      🎬 Executing video merge...")
     
     try:
-        def timeout_handler(signum, frame):
-            raise TimeoutError("Video merging timeout")
-        
-        # Only set alarm on Unix systems
-        if hasattr(signal, 'alarm'):
-            signal.signal(signal.SIGALRM, timeout_handler)
-            signal.alarm(300)  # 5 minute timeout
-        
-        try:
-            merge_success = merge_videos(encoded_scene_paths, final_output_path, logging_enabled=logging_enabled)
-        finally:
-            # Cancel the alarm
-            if hasattr(signal, 'alarm'):
-                signal.alarm(0)
+        merge_success = merge_videos(encoded_scene_paths, final_output_path, logging_enabled=logging_enabled)
         
         merge_time = time.time() - merge_start_time
         
@@ -237,18 +236,54 @@ def validation_and_merging(original_video_path, encoded_scenes_data, config, log
     final_vmaf = None
     final_vmaf_time = 0
     
-    if logging_enabled:
-        print(f"   ⏭️ Skipping full video VMAF calculation (disabled in config)")
+    if calculate_full_video_vmaf:
+        if logging_enabled:
+            print(f"   🔍 Calculating full-video VMAF using sampling...")
+        vmaf_start = time.time()
+        try:
+            final_vmaf = calculate_vmaf_advanced(
+                input_file=original_video_path,
+                encoded_file=final_output_path,
+                use_sampling=vmaf_config.get('vmaf_use_sampling', True),
+                num_clips=vmaf_config.get('vmaf_num_clips', 3),
+                clip_duration=vmaf_config.get('vmaf_clip_duration', 2),
+                use_downscaling=vmaf_config.get('vmaf_use_downscaling', True),
+                scale_factor=vmaf_config.get('vmaf_scale_factor', 0.5),
+                use_vmafneg=vmaf_config.get('use_vmafneg', False),
+                default_vmaf_model_path_config=vmaf_config.get('default_vmaf_model_path'),
+                vmafneg_model_path_config=vmaf_config.get('vmafneg_model_path'),
+                use_frame_rate_scaling=vmaf_config.get('vmaf_use_frame_rate_scaling', False),
+                target_fps=vmaf_config.get('vmaf_target_fps', 15.0),
+                frame_rate_scaling_method=vmaf_config.get('vmaf_frame_rate_scaling_method', 'uniform'),
+                logging_enabled=logging_enabled,
+                ffmpeg_binary_path=vmaf_config.get('ffmpeg_vmaf_binary')
+            )
+            final_vmaf_time = time.time() - vmaf_start
+            if final_vmaf is not None and logging_enabled:
+                print(f"   ✅ Final video VMAF: {final_vmaf:.2f} (in {final_vmaf_time:.1f}s)")
+            elif logging_enabled:
+                print(f"   ❌ Final video VMAF calculation returned None")
+        except Exception as e:
+            final_vmaf_time = time.time() - vmaf_start
+            final_vmaf = None
+            if logging_enabled:
+                print(f"   ❌ Full-video VMAF calculation failed: {e}")
+    else:
+        if logging_enabled:
+            print(f"   ⏭️ Skipping full video VMAF calculation (disabled in config)")
     
     # Estimate final VMAF from scene averages if available
-    scene_vmafs = [scene.get('actual_vmaf', 0) for scene in successful_scenes if scene.get('actual_vmaf', 0) > 0]
-    if scene_vmafs:
+    scene_vmafs = []
+    for scene in successful_scenes:
+        v = scene.get('actual_vmaf')
+        if v is not None and v > 0:
+            scene_vmafs.append(v)
+    if final_vmaf is None and scene_vmafs:
         final_vmaf = sum(scene_vmafs) / len(scene_vmafs)
         if logging_enabled:
             print(f"   📊 Estimated VMAF from scene average: {final_vmaf:.2f}")
-    else:
-        if logging_enabled:
-            print(f"   ⏭️ No scene VMAF data available for estimation")
+    elif not scene_vmafs and logging_enabled:
+        print(f"   ⏭️ No scene VMAF data available for estimation")
     
     # ===== COMPREHENSIVE REPORT GENERATION =====
     if logging_enabled:
@@ -553,6 +588,3 @@ def validation_and_merging(original_video_path, encoded_scenes_data, config, log
         print(f"   🔍 VMAF data from Part 4: {len(scenes_with_valid_vmaf)}/{len(successful_scenes)} scenes")
     
     return final_output_path, final_vmaf, comprehensive_report
-
-
-

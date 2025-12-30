@@ -61,28 +61,29 @@ def get_cq_from_lookup_table(scene_type, config, target_vmaf=None, target_qualit
         quality_tier = 'low'
     
     default_cq_map = {
-        # Optimized for scoring: Higher CQ = more compression = better score
-        # Target: VMAF threshold + 2-3 points with 8-15x compression ratio
-        'high': {  # Target VMAF ~95 (threshold 93)
-            'animation': 30,      # Animation compresses very well
-            'low-action': 28,     # Static content handles higher CQ
-            'medium-action': 26,  # Balanced for general content
-            'high-action': 24,    # Fast motion needs lower CQ
-            'default': 27
+        # AGGRESSIVE CQ values for better compression (scoring is 70% compression)
+        # Higher CQ = more compression = better score (if VMAF threshold met)
+        # Increased by +4 from previous values for 35-45% compression target
+        'high': {  # Target VMAF ~93-95 (threshold 93)
+            'animation': 34,      # Animation compresses very well
+            'low-action': 32,     # Static content handles high CQ
+            'medium-action': 30,  # Balanced for general content
+            'high-action': 28,    # Fast motion needs lower CQ
+            'default': 31
         },
-        'medium': {  # Target VMAF ~91 (threshold 89)
-            'animation': 33,
-            'low-action': 31,
-            'medium-action': 29,
-            'high-action': 27,
-            'default': 30
+        'medium': {  # Target VMAF ~89-91 (threshold 89)
+            'animation': 37,
+            'low-action': 35,
+            'medium-action': 33,
+            'high-action': 31,
+            'default': 34
         },
-        'low': {  # Target VMAF ~87 (threshold 85)
-            'animation': 36,
-            'low-action': 34,
-            'medium-action': 32,
-            'high-action': 30,
-            'default': 33
+        'low': {  # Target VMAF ~85-87 (threshold 85)
+            'animation': 40,
+            'low-action': 38,
+            'medium-action': 36,
+            'high-action': 34,
+            'default': 37
         }
     }
     
@@ -614,55 +615,67 @@ def ai_encoding(scene_metadata, config, resources, target_vmaf=None, target_qual
     if logging_enabled:
         print(f"   ⚙️ Codec Mode: {codec_mode}, Target Bitrate: {target_bitrate} Mbps")
 
-    # STEP 1: BASIC ANALYSIS - Classify scene and extract video features in one call
-    if logging_enabled:
-        print(f"   🤖 Running scene classification and feature extraction...")
-    
+    # STEP 1: SCENE CLASSIFICATION (can be skipped for speed)
+    # Check if fast mode is enabled (skips AI classification, saves ~3-5s)
+    skip_classification = config.get('video_processing', {}).get('skip_scene_classification', True)
+
     scene_type = 'default'
     confidence_score = 0.0
     video_features = {}
     detailed_results = {}
-    try:
-        classification_result = classify_scene_from_path(
-            scene_path=scene_path,
-            temp_dir=temp_dir,
-            scene_classifier_model=resources['scene_classifier_model'],
-            available_metrics=resources['available_metrics'],
-            device=resources['device'],
-            metrics_scaler=resources['feature_scaler_step'],
-            class_mapping=resources['class_mapping'],
-            logging_enabled=logging_enabled,
-        )
-        
-        # Handle the tuple return from classify_scene_from_path (now returns 3 items)
-        if isinstance(classification_result, tuple) and len(classification_result) == 3:
-            scene_type, detailed_results, video_features = classification_result
-            confidence_score = detailed_results.get('confidence_score', 0.0)
-        elif isinstance(classification_result, tuple) and len(classification_result) == 2:
-            # Fallback for older return format
-            scene_type, detailed_results = classification_result
-            confidence_score = detailed_results.get('confidence_score', 0.0)
-            video_features = {}
-        elif isinstance(classification_result, dict):
-            # Fallback if it returns a dict instead of tuple
-            scene_type = classification_result.get('scene_type', 'default')
-            confidence_score = classification_result.get('confidence_score', 0.0)
-            video_features = {}
-        else:
-            # Unknown return type, use defaults
-            scene_type = 'default'
-            confidence_score = 0.0
-            video_features = {}
 
+    if skip_classification:
+        # FAST MODE: Skip AI classification, use default scene type
+        # Saves ~3-5s per video by avoiding frame extraction and AI inference
+        scene_type = 'medium-action'  # Safe default that works well for most content
+        confidence_score = 1.0
         if logging_enabled:
-            print(f"   🎭 Scene classified as: '{scene_type}' (Confidence: {confidence_score:.2f})")
-            if video_features:
-                print(f"   📊 Video features extracted: {len(video_features)} metrics")
+            print(f"   ⚡ Fast mode: Skipping scene classification (using '{scene_type}')")
+    else:
+        # FULL MODE: Run AI scene classification
+        if logging_enabled:
+            print(f"   🤖 Running scene classification and feature extraction...")
+        try:
+            classification_result = classify_scene_from_path(
+                scene_path=scene_path,
+                temp_dir=temp_dir,
+                scene_classifier_model=resources['scene_classifier_model'],
+                available_metrics=resources['available_metrics'],
+                device=resources['device'],
+                metrics_scaler=resources['feature_scaler_step'],
+                class_mapping=resources['class_mapping'],
+                logging_enabled=logging_enabled,
+            )
 
-    except Exception as e:
-        if logging_enabled:
-            print(f"   ❌ Scene classification failed: {e}")
-            traceback.print_exc()
+            # Handle the tuple return from classify_scene_from_path (now returns 3 items)
+            if isinstance(classification_result, tuple) and len(classification_result) == 3:
+                scene_type, detailed_results, video_features = classification_result
+                confidence_score = detailed_results.get('confidence_score', 0.0)
+            elif isinstance(classification_result, tuple) and len(classification_result) == 2:
+                # Fallback for older return format
+                scene_type, detailed_results = classification_result
+                confidence_score = detailed_results.get('confidence_score', 0.0)
+                video_features = {}
+            elif isinstance(classification_result, dict):
+                # Fallback if it returns a dict instead of tuple
+                scene_type = classification_result.get('scene_type', 'default')
+                confidence_score = classification_result.get('confidence_score', 0.0)
+                video_features = {}
+            else:
+                # Unknown return type, use defaults
+                scene_type = 'default'
+                confidence_score = 0.0
+                video_features = {}
+
+            if logging_enabled:
+                print(f"   🎭 Scene classified as: '{scene_type}' (Confidence: {confidence_score:.2f})")
+                if video_features:
+                    print(f"   📊 Video features extracted: {len(video_features)} metrics")
+
+        except Exception as e:
+            if logging_enabled:
+                print(f"   ❌ Scene classification failed: {e}")
+                traceback.print_exc()
     
     # Map the scene type to lookup table key
     original_scene_type = scene_type

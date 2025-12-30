@@ -5,7 +5,11 @@ import tempfile
 import subprocess
 import concurrent.futures
 from ffmpeg_quality_metrics import FfmpegQualityMetrics
-    
+import shutil
+
+# Default ffmpeg binary for VMAF calculations (must have libvmaf support)
+FFMPEG_VMAF_BINARY = '/usr/local/bin/ffmpeg-vmaf'
+
 def _extract_clip_optimized(input_file, output_file, start_time, duration, logging_enabled=False):
     """Extract clip with keyframe-aware seeking for better quality."""
     try:
@@ -46,9 +50,75 @@ def _extract_clip_optimized(input_file, output_file, start_time, duration, loggi
             print(f"   ❌ Clip extraction error: {e}")
         return False
 
-def extract_vmaf_clips_with_keyframe_detection(input_file, encoded_file, num_clips=5, clip_duration=3, logging_enabled=True):
-    """Enhanced clip extraction with proper keyframe alignment."""
-    
+def _process_single_clip(args):
+    """Process a single clip for VMAF calculation (used for parallel processing)."""
+    i, start_time, input_file, encoded_file, clip_duration, logging_enabled = args
+
+    temp_dir = tempfile.mkdtemp()
+    ref_clip = os.path.join(temp_dir, f"ref_clip_{i+1}.mp4")
+    enc_clip = os.path.join(temp_dir, f"enc_clip_{i+1}.mp4")
+
+    try:
+        # Extract reference clip
+        ref_cmd = [
+            'ffmpeg', '-y', '-ss', str(start_time), '-i', input_file,
+            '-t', str(clip_duration), '-c:v', 'libx264', '-preset', 'ultrafast',
+            '-crf', '10', '-force_key_frames', 'expr:gte(t,0)',
+            '-pix_fmt', 'yuv420p', '-avoid_negative_ts', 'make_zero', ref_clip
+        ]
+
+        # Extract encoded clip
+        enc_cmd = [
+            'ffmpeg', '-y', '-ss', str(start_time), '-i', encoded_file,
+            '-t', str(clip_duration), '-c:v', 'libx264', '-preset', 'ultrafast',
+            '-crf', '15', '-pix_fmt', 'yuv420p', '-avoid_negative_ts', 'make_zero', enc_clip
+        ]
+
+        ref_result = subprocess.run(ref_cmd, capture_output=True, text=True, timeout=60)
+        enc_result = subprocess.run(enc_cmd, capture_output=True, text=True, timeout=60)
+
+        if ref_result.returncode == 0 and enc_result.returncode == 0:
+            # Calculate VMAF for this clip
+            ffqm = FfmpegQualityMetrics(ref_clip, enc_clip, scaling_algorithm='bicubic', ffmpeg_path=FFMPEG_VMAF_BINARY)
+            metrics = ffqm.calculate(["vmaf"])
+
+            if 'vmaf' in metrics and metrics['vmaf']:
+                clip_vmaf = sum([frame["vmaf"] for frame in metrics["vmaf"]]) / len(metrics["vmaf"])
+                return (i, round(clip_vmaf, 2), None)
+            else:
+                return (i, None, "VMAF calculation failed")
+        else:
+            return (i, None, "Clip extraction failed")
+
+    except Exception as e:
+        return (i, None, str(e))
+    finally:
+        # Cleanup
+        for temp_file in [ref_clip, enc_clip]:
+            if os.path.exists(temp_file):
+                try:
+                    os.remove(temp_file)
+                except:
+                    pass
+        try:
+            os.rmdir(temp_dir)
+        except:
+            pass
+
+
+def extract_vmaf_clips_with_keyframe_detection(input_file, encoded_file, num_clips=5, clip_duration=3, logging_enabled=True, ffmpeg_path=None, use_parallel=True):
+    """Enhanced clip extraction with proper keyframe alignment and parallel processing.
+
+    Args:
+        input_file: Path to reference video
+        encoded_file: Path to encoded video
+        num_clips: Number of clips to sample
+        clip_duration: Duration of each clip in seconds
+        logging_enabled: Whether to print progress messages
+        ffmpeg_path: Optional custom ffmpeg path
+        use_parallel: Whether to use parallel processing for clips (default: True)
+    """
+
     try:
         cmd = [
             'ffprobe', '-v', 'quiet', '-show_entries', 'format=duration',
@@ -57,17 +127,17 @@ def extract_vmaf_clips_with_keyframe_detection(input_file, encoded_file, num_cli
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
         data = json.loads(result.stdout)
         duration = float(data['format']['duration'])
-        
+
         if duration < clip_duration * num_clips:
             if logging_enabled:
                 print(f"   ⚠️ Video too short ({duration:.1f}s) for {num_clips} clips")
             return None
-            
+
     except Exception as e:
         if logging_enabled:
             print(f"   ❌ Could not determine video duration: {e}")
         return None
-    
+
     try:
         cmd = [
             'ffprobe', '-v', 'quiet', '-select_streams', 'v:0',
@@ -75,29 +145,29 @@ def extract_vmaf_clips_with_keyframe_detection(input_file, encoded_file, num_cli
             '-of', 'csv=p=0', input_file
         ]
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-        
+
         keyframes = []
         for line in result.stdout.strip().split('\n'):
             if line:
                 parts = line.split(',')
                 if len(parts) >= 2 and parts[1] == '1':  # key_frame=1
                     keyframes.append(float(parts[0]))
-        
+
         if logging_enabled:
             print(f"   🔑 Found {len(keyframes)} keyframes")
-            
+
     except Exception as e:
         if logging_enabled:
             print(f"   ⚠️ Keyframe detection failed: {e}, using standard timing")
         keyframes = []
-    
+
     clip_positions = []
-    
+
     target_positions = []
     for i in range(num_clips):
         position = 0.15 + (i * (0.85 - 0.15) / (num_clips - 1)) if num_clips > 1 else 0.5
         target_positions.append(duration * position)
-    
+
     for target_pos in target_positions:
         if keyframes:
             nearest_keyframe = min(keyframes, key=lambda x: abs(x - target_pos))
@@ -111,72 +181,110 @@ def extract_vmaf_clips_with_keyframe_detection(input_file, encoded_file, num_cli
                     clip_positions.append(max(0, duration - clip_duration))
         else:
             clip_positions.append(max(0, min(target_pos, duration - clip_duration)))
-    
+
     if logging_enabled:
         print(f"   📍 Clip positions: {[f'{pos:.2f}s' for pos in clip_positions]}")
-    
+
     vmaf_scores = []
-    
-    for i, start_time in enumerate(clip_positions):
+
+    # Use parallel processing for clip VMAF calculations
+    if use_parallel and num_clips > 1:
         if logging_enabled:
-            print(f"   🎬 Extracting clip {i+1} at {start_time:.2f}s...")
-        
-        temp_dir = tempfile.mkdtemp()
-        ref_clip = os.path.join(temp_dir, f"ref_clip_{i+1}.mp4")
-        enc_clip = os.path.join(temp_dir, f"enc_clip_{i+1}.mp4")
-        
-        try:
-            ref_cmd = [
-                'ffmpeg', '-y', '-ss', str(start_time), '-i', input_file,
-                '-t', str(clip_duration), '-c:v', 'libx264', '-preset', 'ultrafast',
-                '-crf', '10', '-force_key_frames', 'expr:gte(t,0)', 
-                '-pix_fmt', 'yuv420p', '-avoid_negative_ts', 'make_zero', ref_clip
-            ]
-            
-            enc_cmd = [
-                'ffmpeg', '-y', '-ss', str(start_time), '-i', encoded_file,
-                '-t', str(clip_duration), '-c:v', 'libx264', '-preset', 'ultrafast',
-                '-crf', '15', '-pix_fmt', 'yuv420p', '-avoid_negative_ts', 'make_zero', enc_clip
-            ]
-            
-            ref_result = subprocess.run(ref_cmd, capture_output=True, text=True, timeout=60)
-            enc_result = subprocess.run(enc_cmd, capture_output=True, text=True, timeout=60)
-            
-            if ref_result.returncode == 0 and enc_result.returncode == 0:
-                from ffmpeg_quality_metrics import FfmpegQualityMetrics
-                
-                ffqm = FfmpegQualityMetrics(ref_clip, enc_clip)
-                metrics = ffqm.calculate(["vmaf"])
-                
-                if 'vmaf' in metrics and metrics['vmaf']:
-                    clip_vmaf = sum([frame["vmaf"] for frame in metrics["vmaf"]]) / len(metrics["vmaf"])
-                    vmaf_scores.append(round(clip_vmaf, 2))
-                    
+            print(f"   🚀 Processing {num_clips} clips in parallel...")
+
+        # Prepare arguments for parallel processing
+        clip_args = [
+            (i, start_time, input_file, encoded_file, clip_duration, False)  # logging_enabled=False for threads
+            for i, start_time in enumerate(clip_positions)
+        ]
+
+        # Use ThreadPoolExecutor for parallel clip processing
+        # Limit workers to avoid overwhelming the system (VMAF is CPU-intensive)
+        max_workers = min(num_clips, max(2, os.cpu_count() // 2))
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {executor.submit(_process_single_clip, args): args[0] for args in clip_args}
+
+            for future in concurrent.futures.as_completed(futures):
+                clip_idx = futures[future]
+                try:
+                    idx, score, error = future.result()
+                    if score is not None:
+                        vmaf_scores.append((idx, score))
+                        if logging_enabled:
+                            print(f"   ✅ Clip {idx+1} VMAF: {score:.2f}")
+                    else:
+                        if logging_enabled:
+                            print(f"   ❌ Clip {idx+1} failed: {error}")
+                except Exception as e:
                     if logging_enabled:
-                        print(f"   ✅ Clip {i+1} VMAF: {clip_vmaf:.2f}")
+                        print(f"   ❌ Clip {clip_idx+1} exception: {e}")
+
+        # Sort by clip index and extract just the scores
+        vmaf_scores.sort(key=lambda x: x[0])
+        vmaf_scores = [score for idx, score in vmaf_scores]
+
+    else:
+        # Sequential processing (original behavior)
+        for i, start_time in enumerate(clip_positions):
+            if logging_enabled:
+                print(f"   🎬 Extracting clip {i+1} at {start_time:.2f}s...")
+
+            temp_dir = tempfile.mkdtemp()
+            ref_clip = os.path.join(temp_dir, f"ref_clip_{i+1}.mp4")
+            enc_clip = os.path.join(temp_dir, f"enc_clip_{i+1}.mp4")
+
+            try:
+                ref_cmd = [
+                    'ffmpeg', '-y', '-ss', str(start_time), '-i', input_file,
+                    '-t', str(clip_duration), '-c:v', 'libx264', '-preset', 'ultrafast',
+                    '-crf', '10', '-force_key_frames', 'expr:gte(t,0)',
+                    '-pix_fmt', 'yuv420p', '-avoid_negative_ts', 'make_zero', ref_clip
+                ]
+
+                enc_cmd = [
+                    'ffmpeg', '-y', '-ss', str(start_time), '-i', encoded_file,
+                    '-t', str(clip_duration), '-c:v', 'libx264', '-preset', 'ultrafast',
+                    '-crf', '15', '-pix_fmt', 'yuv420p', '-avoid_negative_ts', 'make_zero', enc_clip
+                ]
+
+                ref_result = subprocess.run(ref_cmd, capture_output=True, text=True, timeout=60)
+                enc_result = subprocess.run(enc_cmd, capture_output=True, text=True, timeout=60)
+
+                if ref_result.returncode == 0 and enc_result.returncode == 0:
+                    # Use FfmpegQualityMetrics with custom ffmpeg binary that has libvmaf
+                    ffqm = FfmpegQualityMetrics(ref_clip, enc_clip, scaling_algorithm='bicubic', ffmpeg_path=FFMPEG_VMAF_BINARY)
+                    metrics = ffqm.calculate(["vmaf"])
+
+                    if 'vmaf' in metrics and metrics['vmaf']:
+                        clip_vmaf = sum([frame["vmaf"] for frame in metrics["vmaf"]]) / len(metrics["vmaf"])
+                        vmaf_scores.append(round(clip_vmaf, 2))
+
+                        if logging_enabled:
+                            print(f"   ✅ Clip {i+1} VMAF: {clip_vmaf:.2f}")
+                    else:
+                        if logging_enabled:
+                            print(f"   ❌ Clip {i+1} VMAF calculation failed")
                 else:
                     if logging_enabled:
-                        print(f"   ❌ Clip {i+1} VMAF calculation failed")
-            else:
+                        print(f"   ❌ Clip {i+1} extraction failed")
+
+            except Exception as e:
                 if logging_enabled:
-                    print(f"   ❌ Clip {i+1} extraction failed")
-                    
-        except Exception as e:
-            if logging_enabled:
-                print(f"   ❌ Clip {i+1} processing failed: {e}")
-        finally:
-            # Cleanup
-            for temp_file in [ref_clip, enc_clip]:
-                if os.path.exists(temp_file):
-                    try:
-                        os.remove(temp_file)
-                    except:
-                        pass
-            try:
-                os.rmdir(temp_dir)
-            except:
-                pass
-    
+                    print(f"   ❌ Clip {i+1} processing failed: {e}")
+            finally:
+                # Cleanup
+                for temp_file in [ref_clip, enc_clip]:
+                    if os.path.exists(temp_file):
+                        try:
+                            os.remove(temp_file)
+                        except:
+                            pass
+                try:
+                    os.rmdir(temp_dir)
+                except:
+                    pass
+
     if vmaf_scores:
         if len(vmaf_scores) >= 3:
             sorted_scores = sorted(vmaf_scores)
@@ -214,7 +322,8 @@ def calculate_vmaf_advanced(input_file, encoded_file,
                            use_frame_rate_scaling=False,    
                            target_fps=15.0,                 
                            frame_rate_scaling_method='uniform', 
-                           logger=None,logging_enabled=True):
+                           logger=None,logging_enabled=True,
+                           ffmpeg_binary_path: str = None):
     """
     Calculate VMAF with multiple sampling methods
     
@@ -242,6 +351,25 @@ def calculate_vmaf_advanced(input_file, encoded_file,
             else: logger.info(message)
         else:
             print(message) # Fallback if no logger
+
+    # Resolve optional ffmpeg binary for VMAF-only calculations by creating a temp bin dir with symlinks
+    original_path = os.environ.get("PATH", "")
+    temp_bin_dir = None
+    if ffmpeg_binary_path:
+        try:
+            resolved_ffmpeg = shutil.which(ffmpeg_binary_path) or ffmpeg_binary_path
+            temp_bin_dir = tempfile.mkdtemp()
+            os.symlink(resolved_ffmpeg, os.path.join(temp_bin_dir, "ffmpeg"))
+            # Try to locate matching ffprobe (either ffprobe-vmaf or alongside ffmpeg)
+            resolved_ffprobe = shutil.which("ffprobe-vmaf") or shutil.which("ffprobe") or os.path.join(os.path.dirname(resolved_ffmpeg), "ffprobe")
+            if resolved_ffprobe and os.path.exists(resolved_ffprobe):
+                os.symlink(resolved_ffprobe, os.path.join(temp_bin_dir, "ffprobe"))
+            os.environ["PATH"] = f"{temp_bin_dir}:{original_path}"
+        except Exception as e:
+            if logger:
+                logger.warning(f"Failed to set custom ffmpeg for VMAF: {e}")
+            else:
+                print(f"Failed to set custom ffmpeg for VMAF: {e}")
 
     if not os.path.exists(input_file):
         log_message(f"Error: Input file '{input_file}' does not exist", "error")
@@ -448,15 +576,17 @@ def calculate_vmaf_advanced(input_file, encoded_file,
             except (KeyError, ValueError) as e:
                 print(f"Could not determine video duration: {e}, falling back to full calculation")
                 # Calculate VMAF on full videos
-                ffqm = FfmpegQualityMetrics(input_file, encoded_file)
-                metrics = ffqm.calculate(["vmaf"], vmaf_options=vmaf_options_dict) # Pass model options
+                ffmpeg_path = ffmpeg_binary_path or FFMPEG_VMAF_BINARY
+                ffqm = FfmpegQualityMetrics(input_file, encoded_file, scaling_algorithm='bicubic', ffmpeg_path=ffmpeg_path)
+                metrics = ffqm.calculate(["vmaf"], vmaf_options=vmaf_options_dict)
                 return extract_vmaf_score(metrics)
-            
+
             # Skip sampling for short videos
             if duration <= num_clips * clip_duration * 2:
                 log_message(f"Video too short ({duration}s), calculating full VMAF")
-                ffqm = FfmpegQualityMetrics(input_file, encoded_file)
-                metrics = ffqm.calculate(["vmaf"], vmaf_options=vmaf_options_dict) # Pass model options
+                ffmpeg_path = ffmpeg_binary_path or FFMPEG_VMAF_BINARY
+                ffqm = FfmpegQualityMetrics(input_file, encoded_file, scaling_algorithm='bicubic', ffmpeg_path=ffmpeg_path)
+                metrics = ffqm.calculate(["vmaf"], vmaf_options=vmaf_options_dict)
                 return extract_vmaf_score(metrics)
             
             # Calculate strategic sample points (beginning, middle, end)
@@ -510,10 +640,9 @@ def calculate_vmaf_advanced(input_file, encoded_file,
                 
                 # Calculate VMAF for this clip
                 try:
-                    ffqm = FfmpegQualityMetrics(ref_clip, enc_clip)
-                    metrics = ffqm.calculate(["vmaf"], vmaf_options=vmaf_options_dict) # Pass model options
-                    
-                    # Extract VMAF score using our helper function
+                    ffmpeg_path = ffmpeg_binary_path or FFMPEG_VMAF_BINARY
+                    ffqm = FfmpegQualityMetrics(ref_clip, enc_clip, scaling_algorithm='bicubic', ffmpeg_path=ffmpeg_path)
+                    metrics = ffqm.calculate(["vmaf"], vmaf_options=vmaf_options_dict)
                     clip_vmaf = extract_vmaf_score(metrics)
                     if clip_vmaf is not None:
                         print(f"Clip at {start_time:.2f}s VMAF: {clip_vmaf}")
@@ -552,8 +681,9 @@ def calculate_vmaf_advanced(input_file, encoded_file,
                 print("No valid VMAF scores calculated from clips, trying direct calculation")
                 # Fall back to original calculation
                 try:
-                    ffqm = FfmpegQualityMetrics(input_file, encoded_file)
-                    metrics = ffqm.calculate(["vmaf"], vmaf_options=vmaf_options_dict) # Pass model options
+                    ffmpeg_path = ffmpeg_binary_path or FFMPEG_VMAF_BINARY
+                    ffqm = FfmpegQualityMetrics(input_file, encoded_file, scaling_algorithm='bicubic', ffmpeg_path=ffmpeg_path)
+                    metrics = ffqm.calculate(["vmaf"], vmaf_options=vmaf_options_dict)
                     return extract_vmaf_score(metrics)
                 except Exception as e:
                     print(f"Direct VMAF calculation failed: {e}")
@@ -562,8 +692,9 @@ def calculate_vmaf_advanced(input_file, encoded_file,
             # No sampling, calculate VMAF on entire video
             try:
                 print("Calculating full VMAF (no sampling)...")
-                ffqm = FfmpegQualityMetrics(input_file, encoded_file)
-                metrics = ffqm.calculate(["vmaf"], vmaf_options=vmaf_options_dict) # Pass model options
+                ffmpeg_path = ffmpeg_binary_path or FFMPEG_VMAF_BINARY
+                ffqm = FfmpegQualityMetrics(input_file, encoded_file, scaling_algorithm='bicubic', ffmpeg_path=ffmpeg_path)
+                metrics = ffqm.calculate(["vmaf"], vmaf_options=vmaf_options_dict)
                 return extract_vmaf_score(metrics)
             except Exception as e:
                 print(f"Full VMAF calculation failed: {e}")
@@ -613,6 +744,18 @@ def calculate_vmaf_advanced(input_file, encoded_file,
             os.rmdir(temp_dir)
         except Exception as e:
             print(f"Error removing temp directory: {e}")
+        
+        # Restore original PATH so encoding keeps using system ffmpeg (NVENC-capable)
+        os.environ["PATH"] = original_path
+        if temp_bin_dir and os.path.exists(temp_bin_dir):
+            try:
+                for fname in ("ffmpeg", "ffprobe"):
+                    fpath = os.path.join(temp_bin_dir, fname)
+                    if os.path.exists(fpath):
+                        os.unlink(fpath)
+                os.rmdir(temp_bin_dir)
+            except Exception:
+                pass
 
 def apply_frame_rate_scaling(input_file, encoded_file, target_fps, scaling_method, temp_dir, logging_enabled=True):
     """Apply frame rate scaling while preserving reference quality."""
@@ -732,3 +875,190 @@ def apply_frame_rate_scaling(input_file, encoded_file, target_fps, scaling_metho
         if logging_enabled:
             print(f"Frame rate scaling error: {e}")
         return None, None
+
+
+def calculate_vmaf_simple(reference_file: str, encoded_file: str,
+                          scale_factor: float = 0.5,
+                          target_fps: float = 15.0,
+                          ffmpeg_binary: str = None,
+                          logging_enabled: bool = True) -> float | None:
+    """
+    Simple, robust VMAF calculation using direct ffmpeg commands.
+
+    This is a streamlined alternative to calculate_vmaf_advanced that:
+    - Uses direct ffmpeg libvmaf filter (no FfmpegQualityMetrics library)
+    - Optionally downscales and reduces framerate for speed
+    - Parses VMAF score directly from ffmpeg output
+    - Much more reliable than clip-based sampling
+
+    Args:
+        reference_file: Path to the original/reference video
+        encoded_file: Path to the encoded/compressed video
+        scale_factor: Downscale factor (0.5 = 50% resolution, 1.0 = no downscale)
+        target_fps: Target FPS for VMAF calculation (lower = faster)
+        ffmpeg_binary: Path to ffmpeg binary with libvmaf (default: ffmpeg-vmaf)
+        logging_enabled: Whether to print progress messages
+
+    Returns:
+        VMAF score as float (0-100), or None if calculation fails
+    """
+    ffmpeg_bin = ffmpeg_binary or FFMPEG_VMAF_BINARY
+
+    # Verify files exist
+    if not os.path.exists(reference_file):
+        if logging_enabled:
+            print(f"❌ Reference file not found: {reference_file}")
+        return None
+    if not os.path.exists(encoded_file):
+        if logging_enabled:
+            print(f"❌ Encoded file not found: {encoded_file}")
+        return None
+
+    temp_dir = tempfile.mkdtemp(prefix="vmaf_simple_")
+
+    try:
+        start_time = time.time()
+
+        # Get video dimensions for proper scaling
+        probe_cmd = [
+            'ffprobe', '-v', 'error', '-select_streams', 'v:0',
+            '-show_entries', 'stream=width,height', '-of', 'json', reference_file
+        ]
+        probe_result = subprocess.run(probe_cmd, capture_output=True, text=True, timeout=30)
+
+        try:
+            probe_data = json.loads(probe_result.stdout)
+            orig_width = int(probe_data['streams'][0]['width'])
+            orig_height = int(probe_data['streams'][0]['height'])
+        except (json.JSONDecodeError, KeyError, IndexError):
+            # Default to common dimensions if probe fails
+            orig_width, orig_height = 1920, 1080
+            if logging_enabled:
+                print(f"⚠️ Could not probe dimensions, assuming {orig_width}x{orig_height}")
+
+        # Calculate scaled dimensions (must be even for YUV)
+        scaled_width = int(orig_width * scale_factor)
+        scaled_height = int(orig_height * scale_factor)
+        scaled_width = scaled_width - (scaled_width % 2)
+        scaled_height = scaled_height - (scaled_height % 2)
+
+        if logging_enabled:
+            print(f"📊 VMAF Calculation:")
+            print(f"   Reference: {os.path.basename(reference_file)}")
+            print(f"   Encoded: {os.path.basename(encoded_file)}")
+            if scale_factor < 1.0:
+                print(f"   Scale: {orig_width}x{orig_height} → {scaled_width}x{scaled_height} ({int(scale_factor*100)}%)")
+            if target_fps > 0:
+                print(f"   FPS target: {target_fps}")
+
+        # Build filter chains for both videos
+        # Reference: scale and fps reduce
+        ref_filter = []
+        enc_filter = []
+
+        if scale_factor < 1.0:
+            ref_filter.append(f"scale={scaled_width}:{scaled_height}")
+            enc_filter.append(f"scale={scaled_width}:{scaled_height}")
+
+        if target_fps > 0:
+            ref_filter.append(f"fps={target_fps}")
+            enc_filter.append(f"fps={target_fps}")
+
+        ref_filter_str = ",".join(ref_filter) if ref_filter else "null"
+        enc_filter_str = ",".join(enc_filter) if enc_filter else "null"
+
+        # Build the libvmaf filter complex
+        # [0:v] = reference, [1:v] = encoded (distorted)
+        filter_complex = (
+            f"[0:v]{ref_filter_str},setpts=PTS-STARTPTS[ref];"
+            f"[1:v]{enc_filter_str},setpts=PTS-STARTPTS[dist];"
+            f"[dist][ref]libvmaf=log_fmt=json:log_path={temp_dir}/vmaf.json"
+        )
+
+        # Run ffmpeg with libvmaf
+        cmd = [
+            ffmpeg_bin,
+            '-i', reference_file,
+            '-i', encoded_file,
+            '-filter_complex', filter_complex,
+            '-f', 'null', '-'
+        ]
+
+        if logging_enabled:
+            print(f"   Running VMAF calculation...")
+
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=300  # 5 minute timeout
+        )
+
+        # Parse VMAF score from JSON output
+        vmaf_json_path = os.path.join(temp_dir, "vmaf.json")
+        vmaf_score = None
+
+        if os.path.exists(vmaf_json_path):
+            try:
+                with open(vmaf_json_path, 'r') as f:
+                    vmaf_data = json.load(f)
+
+                # Extract pooled VMAF score (mean)
+                if 'pooled_metrics' in vmaf_data and 'vmaf' in vmaf_data['pooled_metrics']:
+                    vmaf_score = vmaf_data['pooled_metrics']['vmaf']['mean']
+                elif 'frames' in vmaf_data and vmaf_data['frames']:
+                    # Calculate mean from frame scores
+                    frame_scores = [f['metrics']['vmaf'] for f in vmaf_data['frames'] if 'vmaf' in f.get('metrics', {})]
+                    if frame_scores:
+                        vmaf_score = sum(frame_scores) / len(frame_scores)
+
+            except (json.JSONDecodeError, KeyError) as e:
+                if logging_enabled:
+                    print(f"   ⚠️ Error parsing VMAF JSON: {e}")
+
+        # Fallback: try to parse from stderr
+        if vmaf_score is None:
+            for line in result.stderr.splitlines():
+                if "VMAF score:" in line or "VMAF score =" in line:
+                    try:
+                        # Handle formats like "VMAF score: 92.5" or "VMAF score = 92.5"
+                        parts = line.replace("=", ":").split(":")
+                        for i, part in enumerate(parts):
+                            if "VMAF score" in part and i + 1 < len(parts):
+                                vmaf_score = float(parts[i + 1].strip().split()[0])
+                                break
+                    except (ValueError, IndexError):
+                        continue
+
+        elapsed = time.time() - start_time
+
+        if vmaf_score is not None:
+            vmaf_score = round(vmaf_score, 2)
+            if logging_enabled:
+                print(f"   ✅ VMAF: {vmaf_score} (calculated in {elapsed:.1f}s)")
+            return vmaf_score
+        else:
+            if logging_enabled:
+                print(f"   ❌ Failed to extract VMAF score")
+                if result.returncode != 0:
+                    # Show last few lines of stderr for debugging
+                    stderr_lines = result.stderr.splitlines()[-5:]
+                    for line in stderr_lines:
+                        print(f"      {line}")
+            return None
+
+    except subprocess.TimeoutExpired:
+        if logging_enabled:
+            print(f"   ❌ VMAF calculation timed out")
+        return None
+    except Exception as e:
+        if logging_enabled:
+            print(f"   ❌ VMAF calculation error: {e}")
+        return None
+    finally:
+        # Cleanup temp directory
+        try:
+            import shutil
+            shutil.rmtree(temp_dir, ignore_errors=True)
+        except:
+            pass

@@ -8,6 +8,7 @@ import bittensor as bt
 from vidaio_subnet_core.base.miner import BaseMiner
 from vidaio_subnet_core.protocol import VideoUpscalingProtocol, LengthCheckProtocol, ContentLength, VideoCompressionProtocol, TaskWarrantProtocol, TaskType
 from services.miner_utilities.miner_utils import video_upscaler, video_compressor
+from vidaio_subnet_core.utilities.miner_wandb import get_miner_wandb
 
 from vidaio_subnet_core.utilities.version import check_version
 
@@ -20,6 +21,8 @@ class Miner(BaseMiner):
         Initializes the Miner instance.
         """
         super().__init__()
+        # Initialize wandb for metrics tracking
+        self.wandb = get_miner_wandb(miner=self, miner_uid=self.uid)
 
     async def forward_upscaling_requests(self, synapse: VideoUpscalingProtocol) -> VideoUpscalingProtocol:
         """
@@ -79,21 +82,50 @@ class Miner(BaseMiner):
         try:
             processed_video_url = await video_compressor(payload_url, vmaf_threshold, target_codec, codec_mode, target_bitrate)
 
+            processed_time = time.time() - start_time
+
             if processed_video_url is None:
                 logger.info(f"💔 Failed to compress video 💔")
+                # Log failure to wandb
+                self.wandb.log_compression(
+                    validator_uid=validator_uid,
+                    vmaf_threshold=vmaf_threshold,
+                    processing_time=processed_time,
+                    success=False,
+                    codec=target_codec,
+                    codec_mode=codec_mode
+                )
                 return synapse
 
             synapse.miner_response.optimized_video_url = processed_video_url
 
-            processed_time = time.time() - start_time
-
             logger.info(f"💜 Returning Response, Processed in {processed_time:.2f} seconds 💜")
+
+            # Log success to wandb
+            self.wandb.log_compression(
+                validator_uid=validator_uid,
+                vmaf_threshold=vmaf_threshold,
+                processing_time=processed_time,
+                success=True,
+                codec=target_codec,
+                codec_mode=codec_mode
+            )
 
             return synapse
 
         except Exception as e:
+            processed_time = time.time() - start_time
             logger.error(f"Failed to process compression request: {e}")
             traceback.print_exc()
+            # Log exception to wandb
+            self.wandb.log_compression(
+                validator_uid=validator_uid,
+                vmaf_threshold=vmaf_threshold,
+                processing_time=processed_time,
+                success=False,
+                codec=target_codec,
+                codec_mode=codec_mode
+            )
             return synapse
 
     async def forward_length_check_requests(self, synapse: LengthCheckProtocol) -> LengthCheckProtocol:
