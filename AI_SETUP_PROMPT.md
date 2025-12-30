@@ -200,6 +200,43 @@ pm2 save
 
 ---
 
+## GitHub Authentication (For Pushing Changes)
+
+Each new pod requires GitHub authentication to push code changes. Configure git identity and authentication:
+
+```bash
+# Configure git identity
+git config user.email "sahitsharma.boddupally@gmail.com"
+git config user.name "sahitsharmab"
+
+# Option 1: Set remote URL with token (recommended for automation)
+# Replace YOUR_TOKEN with a GitHub Personal Access Token
+git remote set-url origin https://YOUR_TOKEN@github.com/sahitsharmab/vidaio-subnet.git
+
+# Option 2: Use credential store (prompts once, then remembers)
+git config credential.helper store
+# Token will be requested on first push
+
+# Verify remote is set correctly
+git remote -v
+```
+
+**To create a GitHub Personal Access Token:**
+1. Go to GitHub → Settings → Developer settings → Personal access tokens → Tokens (classic)
+2. Generate new token with `repo` scope
+3. Copy token and use in the commands above
+
+**Note**: Tokens are sensitive - don't commit them to the repo. For automated setups, pass the token as an environment variable:
+```bash
+# In .env or pod environment:
+GITHUB_TOKEN="ghp_your_token_here"
+
+# Then in setup:
+git remote set-url origin https://${GITHUB_TOKEN}@github.com/sahitsharmab/vidaio-subnet.git
+```
+
+---
+
 ## Files Modified from Upstream
 
 These files have custom optimizations - don't overwrite with git pull:
